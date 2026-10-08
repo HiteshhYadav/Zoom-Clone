@@ -239,19 +239,55 @@ function MeetingRoomContent() {
       window.addEventListener('storage', handleStorageChange);
     }
 
-    // ── Setup WebSocket ───────────────────────────────────────
-    try {
-      const ws = connectToMeeting(meetingCode, userName);
-      if (ws) {
-        socketRef.current = ws;
-        ws.onmessage = (event) => {
+    // ── Setup Cloud Serverless Room Sync (Cross-Device) ─────
+    const syncWithCloudRoom = async () => {
+      try {
+        // Register join on cloud server
+        await fetch(`/api/rooms/${meetingCode}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'join',
+            participant: selfParticipant
+          })
+        });
+
+        // Periodic cloud sync every 1.5s
+        const syncInterval = setInterval(async () => {
           try {
-            const data = JSON.parse(event.data);
-            handleIncomingEvent(data);
+            const res = await fetch(`/api/rooms/${meetingCode}`);
+            if (res.ok) {
+              const cloudRoom = await res.json();
+              if (cloudRoom.participants && cloudRoom.participants.length > 0) {
+                setParticipants(prev => {
+                  const map = new Map();
+                  // Keep self
+                  map.set(userName, selfParticipant);
+                  // Add cloud participants
+                  cloudRoom.participants.forEach(p => map.set(p.name, p));
+                  return Array.from(map.values());
+                });
+              }
+              if (cloudRoom.messages && cloudRoom.messages.length > 0) {
+                setMessages(cloudRoom.messages);
+              }
+              if (cloudRoom.reactions && cloudRoom.reactions.length > 0) {
+                const latest = cloudRoom.reactions[cloudRoom.reactions.length - 1];
+                if (latest && (Date.now() - latest.timestamp) < 2000 && latest.senderName !== userName) {
+                  triggerFloatingReaction(latest.emoji, latest.senderName);
+                }
+              }
+            }
           } catch (e) {}
-        };
+        }, 1500);
+
+        return () => clearInterval(syncInterval);
+      } catch (err) {
+        console.warn('Cloud room sync notice:', err);
       }
-    } catch (e) {}
+    };
+
+    syncWithCloudRoom();
   };
 
   const handlePrejoinSubmit = (e) => {
@@ -351,9 +387,38 @@ function MeetingRoomContent() {
   };
 
   const dispatchMeetingEvent = (eventData) => {
+    // 1. Cross-Tab BroadcastChannel
     if (broadcastRef.current) {
       try { broadcastRef.current.postMessage(eventData); } catch (e) {}
     }
+    // 2. Cloud Serverless Room Route (Cross-Device)
+    try {
+      let cloudAction = null;
+      let body = {};
+      if (eventData.type === 'chat_message') {
+        cloudAction = 'chat';
+        body = { action: 'chat', senderName: eventData.name, message: eventData.message };
+      } else if (eventData.type === 'reaction') {
+        cloudAction = 'reaction';
+        body = { action: 'reaction', senderName: eventData.name, emoji: eventData.emoji };
+      } else if (eventData.type === 'mute_all') {
+        cloudAction = 'mute_all';
+        body = { action: 'mute_all' };
+      } else if (eventData.type === 'participant_left') {
+        cloudAction = 'leave';
+        body = { action: 'leave', participant: { name: eventData.name } };
+      }
+
+      if (cloudAction) {
+        fetch(`/api/rooms/${meetingCode}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }).catch(() => {});
+      }
+    } catch (e) {}
+
+    // 3. WebSocket
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       try { socketRef.current.send(JSON.stringify(eventData)); } catch (e) {}
     }
