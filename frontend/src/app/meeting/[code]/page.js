@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   Mic,
@@ -12,7 +12,6 @@ import {
   Users,
   MessageSquare,
   Smile,
-  PhoneOff,
   Shield,
   LayoutGrid,
   Maximize2,
@@ -21,46 +20,44 @@ import {
   Check,
   Send,
   MoreVertical,
-  Volume2,
-  VolumeX,
   X,
-  UserCheck,
   Radio,
   Hand,
   MonitorUp,
-  Settings,
-  HelpCircle,
-  Circle
+  Circle,
+  LogIn
 } from 'lucide-react';
 import { getMeeting, endMeeting, connectToMeeting } from '@/lib/api';
 
-import { Suspense } from 'react';
-
 function MeetingRoomContent() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const meetingCode = params.code;
 
+  // Pre-join prompt state (if user opens invite link directly in a new tab)
+  const [hasJoined, setHasJoined] = useState(false);
+  const [prejoinName, setPrejoinName] = useState('');
+
   // Meeting & User State
   const [meeting, setMeeting] = useState(null);
-  const [displayName, setDisplayName] = useState('John Doe (Host)');
-  const [isHost, setIsHost] = useState(true);
+  const [displayName, setDisplayName] = useState('');
+  const [isHost, setIsHost] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
 
   // Audio/Video/Screen State
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [viewMode, setViewMode] = useState('gallery'); // 'gallery' | 'speaker'
+  const [viewMode, setViewMode] = useState('gallery');
   const [isRecording, setIsRecording] = useState(false);
   const [handRaised, setHandRaised] = useState(false);
 
   // Panels
-  const [activePanel, setActivePanel] = useState(null); // 'participants' | 'chat' | 'security' | 'invite' | null
+  const [activePanel, setActivePanel] = useState(null);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
 
-  // Live WebSocket Data
+  // Live Participants & Messages
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -76,15 +73,17 @@ function MeetingRoomContent() {
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
   const socketRef = useRef(null);
+  const broadcastRef = useRef(null);
   const chatBottomRef = useRef(null);
 
-  // Meeting timer
+  // Timer
   useEffect(() => {
+    if (!hasJoined) return;
     const timer = setInterval(() => {
       setMeetingDuration(prev => prev + 1);
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [hasJoined]);
 
   const formatTimer = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -92,83 +91,139 @@ function MeetingRoomContent() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Load meeting data & Initialize Preferences
+  // ── Initial Setup ───────────────────────────────────────────
   useEffect(() => {
-    async function initMeeting() {
+    async function init() {
       try {
         setLoading(true);
         const meetingData = await getMeeting(meetingCode);
         setMeeting(meetingData);
 
-        // Retrieve local storage preferences if configured
         if (typeof window !== 'undefined') {
           const savedName = localStorage.getItem(`zoom_name_${meetingCode}`);
-          const savedVideo = localStorage.getItem(`zoom_video_${meetingCode}`);
-          const savedAudio = localStorage.getItem(`zoom_audio_${meetingCode}`);
+          const urlName = searchParams.get('name');
           const autoScreen = localStorage.getItem(`zoom_screenshare_${meetingCode}`);
 
-          const finalName = savedName || 'John Doe (Host)';
-          setDisplayName(finalName);
-          if (savedVideo !== null) setIsVideoOn(savedVideo === 'true');
-          if (savedAudio !== null) setIsMuted(savedAudio === 'false');
           if (autoScreen === 'true') {
             setIsScreenSharing(true);
             localStorage.removeItem(`zoom_screenshare_${meetingCode}`);
           }
 
-          // Initial participants list including simulated attendees
-          const defaultParticipants = [
-            { id: 1, name: finalName, isHost: true, isMuted: savedAudio === 'false', isVideoOn: savedVideo !== 'false', avatarColor: '#0B5CFF' },
-            { id: 2, name: 'Sarah Chen (PM)', isHost: false, isMuted: false, isVideoOn: true, avatarColor: '#8E44AD' },
-            { id: 3, name: 'Alex Rivera (Eng)', isHost: false, isMuted: true, isVideoOn: true, avatarColor: '#16A085' },
-            { id: 4, name: 'Emily Taylor (Design)', isHost: false, isMuted: false, isVideoOn: false, avatarColor: '#D35400' },
-          ];
-          setParticipants(defaultParticipants);
-
-          // Initial seed chat messages
-          setMessages([
-            { id: 1, sender: 'Zoom Bot', text: 'Welcome to your meeting! End-to-end encryption is enabled.', time: 'Just now', isSystem: true },
-            { id: 2, sender: 'Sarah Chen (PM)', text: 'Hey team, glad everyone could make it!', time: '1 min ago' },
-          ]);
-
-          // Connect WebSocket for live communication
-          try {
-            const ws = connectToMeeting(meetingCode, finalName);
-            socketRef.current = ws;
-
-            ws.onmessage = (event) => {
-              const data = JSON.parse(event.data);
-              handleSocketMessage(data);
-            };
-
-            ws.onerror = () => {
-              console.log('WebSocket running in offline/simulated fallback mode.');
-            };
-          } catch (wsErr) {
-            console.warn('WS Init notice:', wsErr);
+          if (savedName || urlName) {
+            const finalName = urlName || savedName;
+            setDisplayName(finalName);
+            setIsHost(finalName.includes('Host') || finalName === 'John Doe');
+            setHasJoined(true);
+            startMeetingSession(finalName);
+          } else {
+            // Check if user is on creator tab vs joined via link
+            setPrejoinName('Guest Participant');
+            setLoading(false);
           }
         }
       } catch (err) {
-        setError(err.message || 'Unable to join meeting');
-      } finally {
+        console.error('Failed to init meeting:', err);
         setLoading(false);
       }
     }
 
-    initMeeting();
+    init();
 
     return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-      }
+      cleanupMediaAndChannels();
     };
   }, [meetingCode]);
 
-  // Webcam stream setup
+  const startMeetingSession = (userName) => {
+    setLoading(false);
+
+    const savedVideo = localStorage.getItem(`zoom_video_${meetingCode}`);
+    const savedAudio = localStorage.getItem(`zoom_audio_${meetingCode}`);
+
+    if (savedVideo !== null) setIsVideoOn(savedVideo === 'true');
+    if (savedAudio !== null) setIsMuted(savedAudio === 'false');
+
+    const initialColor = userName.includes('Host') ? '#0B5CFF' : '#27AE60';
+
+    const defaultParticipants = [
+      { id: 'self', name: userName, isHost: userName.includes('Host'), isMuted: savedAudio === 'false', isVideoOn: savedVideo !== 'false', avatarColor: initialColor },
+      { id: 'sarah', name: 'Sarah Chen (PM)', isHost: false, isMuted: false, isVideoOn: true, avatarColor: '#8E44AD' },
+      { id: 'alex', name: 'Alex Rivera (Eng)', isHost: false, isMuted: true, isVideoOn: true, avatarColor: '#16A085' },
+    ];
+    setParticipants(defaultParticipants);
+
+    setMessages([
+      { id: 1, sender: 'Zoom Bot', text: 'Welcome to your meeting! End-to-end encryption is enabled.', time: 'Just now', isSystem: true },
+    ]);
+
+    // ── Setup Cross-Tab Broadcast Channel ─────────────────────
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      try {
+        const bc = new BroadcastChannel(`zoom_room_${meetingCode}`);
+        broadcastRef.current = bc;
+
+        bc.onmessage = (event) => {
+          handleIncomingEvent(event.data);
+        };
+
+        // Announce presence to other open tabs
+        bc.postMessage({
+          type: 'participant_joined',
+          name: userName,
+          avatarColor: initialColor,
+          isVideoOn: savedVideo !== 'false',
+          isMuted: savedAudio === 'false'
+        });
+      } catch (bcErr) {
+        console.warn('BroadcastChannel error:', bcErr);
+      }
+    }
+
+    // ── Setup WebSocket ───────────────────────────────────────
+    try {
+      const ws = connectToMeeting(meetingCode, userName);
+      if (ws) {
+        socketRef.current = ws;
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handleIncomingEvent(data);
+          } catch (e) {}
+        };
+      }
+    } catch (e) {}
+  };
+
+  const handlePrejoinSubmit = (e) => {
+    e.preventDefault();
+    const finalName = prejoinName.trim() || 'Guest Participant';
+    setDisplayName(finalName);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`zoom_name_${meetingCode}`, finalName);
+    }
+    setHasJoined(true);
+    startMeetingSession(finalName);
+  };
+
+  const cleanupMediaAndChannels = () => {
+    if (broadcastRef.current) {
+      try {
+        broadcastRef.current.postMessage({ type: 'participant_left', name: displayName });
+        broadcastRef.current.close();
+      } catch (e) {}
+    }
+    if (socketRef.current) {
+      try { socketRef.current.close(); } catch (e) {}
+    }
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+  };
+
+  // Webcam stream
   useEffect(() => {
+    if (!hasJoined) return;
     async function startCamera() {
       if (isVideoOn) {
         try {
@@ -180,7 +235,7 @@ function MeetingRoomContent() {
             }
           }
         } catch (camErr) {
-          console.log('Camera access notice (fallback to animated avatar avatar):', camErr.message);
+          console.log('Camera notice (using HD Avatar):', camErr.message);
         }
       } else {
         if (localStreamRef.current) {
@@ -190,14 +245,14 @@ function MeetingRoomContent() {
       }
     }
     startCamera();
-  }, [isVideoOn]);
+  }, [isVideoOn, hasJoined]);
 
-  // WebSocket message receiver
-  const handleSocketMessage = (data) => {
+  // Handle incoming event from WebSocket or BroadcastChannel
+  const handleIncomingEvent = (data) => {
     switch (data.type) {
       case 'chat_message':
         setMessages(prev => [...prev, {
-          id: Date.now(),
+          id: Date.now() + Math.random(),
           sender: data.name,
           text: data.message,
           time: data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -210,15 +265,18 @@ function MeetingRoomContent() {
         triggerFloatingReaction(data.emoji, data.name);
         break;
       case 'participant_joined':
-        if (!participants.some(p => p.name === data.name)) {
-          setParticipants(prev => [...prev, {
-            id: Date.now(),
-            name: data.name,
-            isHost: false,
-            isMuted: false,
-            isVideoOn: true,
-            avatarColor: '#2980B9'
-          }]);
+        if (data.name !== displayName) {
+          setParticipants(prev => {
+            if (prev.some(p => p.name === data.name)) return prev;
+            return [...prev, {
+              id: Date.now() + Math.random(),
+              name: data.name,
+              isHost: false,
+              isMuted: data.isMuted || false,
+              isVideoOn: data.isVideoOn !== false,
+              avatarColor: data.avatarColor || '#2980B9'
+            }];
+          });
         }
         break;
       case 'participant_left':
@@ -232,7 +290,15 @@ function MeetingRoomContent() {
     }
   };
 
-  // Floating reaction trigger
+  const dispatchMeetingEvent = (eventData) => {
+    if (broadcastRef.current) {
+      try { broadcastRef.current.postMessage(eventData); } catch (e) {}
+    }
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      try { socketRef.current.send(JSON.stringify(eventData)); } catch (e) {}
+    }
+  };
+
   const triggerFloatingReaction = (emoji, senderName = 'You') => {
     const id = Date.now() + Math.random();
     setFloatingReactions(prev => [...prev, { id, emoji, senderName }]);
@@ -244,12 +310,9 @@ function MeetingRoomContent() {
   const handleSendReaction = (emoji) => {
     triggerFloatingReaction(emoji, 'You');
     setShowEmojiPicker(false);
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'reaction', emoji }));
-    }
+    dispatchMeetingEvent({ type: 'reaction', name: displayName, emoji });
   };
 
-  // Chat sender
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
@@ -262,13 +325,12 @@ function MeetingRoomContent() {
     };
 
     setMessages(prev => [...prev, newMsg]);
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({
-        type: 'chat_message',
-        message: chatInput.trim(),
-        timestamp: newMsg.time
-      }));
-    }
+    dispatchMeetingEvent({
+      type: 'chat_message',
+      name: displayName,
+      message: chatInput.trim(),
+      timestamp: newMsg.time
+    });
     setChatInput('');
   };
 
@@ -276,26 +338,19 @@ function MeetingRoomContent() {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Host Controls: Mute All
   const handleMuteAll = () => {
     setParticipants(prev => prev.map(p => ({ ...p, isMuted: true })));
     setIsMuted(true);
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'mute_all' }));
-    }
+    dispatchMeetingEvent({ type: 'mute_all', name: displayName });
   };
 
-  // Host Controls: Remove Participant
   const handleRemoveParticipant = (id, name) => {
     setParticipants(prev => prev.filter(p => p.id !== id));
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'remove_participant', target_name: name }));
-    }
+    dispatchMeetingEvent({ type: 'participant_left', name });
   };
 
-  // Copy Meeting Link
   const handleCopyInvite = () => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const link = `${origin}/meeting/${meetingCode}`;
     const text = `Join Zoom Meeting:\n${meeting?.title || 'Zoom Meeting'}\nMeeting ID: ${meetingCode}\nLink: ${link}`;
     navigator.clipboard.writeText(text);
@@ -303,17 +358,9 @@ function MeetingRoomContent() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  // End or Leave Meeting
   const handleEndMeeting = async () => {
-    if (confirm('Are you sure you want to end this meeting for all participants?')) {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      try {
-        await endMeeting(meetingCode);
-      } catch (err) {
-        // Handled locally
-      }
+    if (confirm('Are you sure you want to leave this meeting?')) {
+      cleanupMediaAndChannels();
       router.push('/');
     }
   };
@@ -326,6 +373,46 @@ function MeetingRoomContent() {
       if (panelName === 'chat') setUnreadChatCount(0);
     }
   };
+
+  // ── PRE-JOIN DIALOG (If opened link directly in fresh tab) ────
+  if (!hasJoined && !loading) {
+    return (
+      <div style={styles.prejoinContainer}>
+        <div style={styles.prejoinCard}>
+          <div style={styles.prejoinLogo}>
+            <Video size={28} color="#FFFFFF" />
+          </div>
+          <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '6px' }}>
+            Join Zoom Meeting
+          </h2>
+          <p style={{ fontSize: '13px', color: '#747487', marginBottom: '20px' }}>
+            Meeting ID: <strong style={{ color: '#232333' }}>{meetingCode}</strong>
+          </p>
+
+          <form onSubmit={handlePrejoinSubmit}>
+            <div className="form-group" style={{ textAlign: 'left', marginBottom: '18px' }}>
+              <label className="form-label">Your Name</label>
+              <input
+                type="text"
+                className="form-input"
+                style={{ padding: '12px 14px', fontSize: '14px' }}
+                value={prejoinName}
+                onChange={(e) => setPrejoinName(e.target.value)}
+                placeholder="Enter your name to join"
+                autoFocus
+                required
+              />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px' }}>
+              <LogIn size={16} />
+              <span>Join Meeting Room</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -405,7 +492,7 @@ function MeetingRoomContent() {
       <div style={styles.stageWrapper}>
         {/* VIDEO TILES GRID */}
         <div style={styles.videoStage}>
-          {/* Floating Emoji Reactions Layer */}
+          {/* Floating Emoji Reactions */}
           <div style={styles.reactionsLayer}>
             {floatingReactions.map((r) => (
               <div key={r.id} style={styles.floatingEmojiItem}>
@@ -444,7 +531,7 @@ function MeetingRoomContent() {
                       <div style={styles.diagNode}>SQLite Relational DB</div>
                     </div>
                     <div style={styles.slideBullets}>
-                      <div>✓ Real-time participant signaling via WebSocket manager</div>
+                      <div>✓ Real-time participant signaling via WebSocket & BroadcastChannel</div>
                       <div>✓ Instant & Scheduled meeting lifecycle support</div>
                       <div>✓ Complete Zoom UI parity with high-contrast audio controls</div>
                     </div>
@@ -471,7 +558,7 @@ function MeetingRoomContent() {
                 ) : (
                   <div style={{ ...styles.avatarTile, backgroundColor: '#0B5CFF' }}>
                     <div style={styles.avatarLetter}>
-                      {displayName.split(' ').map(n => n[0]).join('')}
+                      {displayName ? displayName.split(' ').map(n => n[0]).join('') : 'JD'}
                     </div>
                   </div>
                 )}
@@ -492,8 +579,8 @@ function MeetingRoomContent() {
 
               {/* Remote Participants */}
               {participants.filter(p => p.name !== displayName).map((p) => (
-                <div key={p.id} style={styles.videoTile}>
-                  <div style={{ ...styles.avatarTile, backgroundColor: p.avatarColor }}>
+                <div key={p.id || p.name} style={styles.videoTile}>
+                  <div style={{ ...styles.avatarTile, backgroundColor: p.avatarColor || '#8E44AD' }}>
                     <div style={styles.avatarLetter}>
                       {p.name.split(' ').map(n => n[0]).join('')}
                     </div>
@@ -506,7 +593,6 @@ function MeetingRoomContent() {
                     <span>{p.name}</span>
                   </div>
 
-                  {/* Talking active audio wave simulation */}
                   {!p.isMuted && (
                     <div style={styles.audioWaveRing} />
                   )}
@@ -528,7 +614,7 @@ function MeetingRoomContent() {
 
             <div style={styles.panelList}>
               {participants.map((p) => (
-                <div key={p.id} style={styles.participantItem}>
+                <div key={p.id || p.name} style={styles.participantItem}>
                   <div style={styles.partLeft}>
                     <div style={{ ...styles.partAvatar, backgroundColor: p.avatarColor || '#0B5CFF' }}>
                       {p.name.split(' ').map(n => n[0]).join('')}
@@ -543,7 +629,7 @@ function MeetingRoomContent() {
 
                   <div style={styles.partRight}>
                     {p.isMuted ? <MicOff size={16} color="#E53935" /> : <Mic size={16} color="#747487" />}
-                    {p.isVideoOn ? <Video size={16} color="#747487" /> : <VideoOff size={16} color="#E53935" />}
+                    {p.isVideoOn !== false ? <Video size={16} color="#747487" /> : <VideoOff size={16} color="#E53935" />}
                     {p.name !== displayName && (
                       <button
                         onClick={() => handleRemoveParticipant(p.id, p.name)}
@@ -610,9 +696,8 @@ function MeetingRoomContent() {
         )}
       </div>
 
-      {/* ── BOTTOM MEETING CONTROLS BAR (ICONIC ZOOM TOOLBAR) ──────── */}
+      {/* ── BOTTOM MEETING CONTROLS BAR ────────────────────────────── */}
       <footer style={styles.controlsBar}>
-        {/* Left: Audio & Video Buttons */}
         <div style={styles.controlGroupLeft}>
           <button 
             onClick={() => setIsMuted(!isMuted)}
@@ -637,7 +722,6 @@ function MeetingRoomContent() {
           </button>
         </div>
 
-        {/* Center: Meeting Collaboration Tools */}
         <div style={styles.controlGroupCenter}>
           <button 
             onClick={() => togglePanel('security')}
@@ -677,7 +761,6 @@ function MeetingRoomContent() {
             <span style={styles.controlLabel}>Chat</span>
           </button>
 
-          {/* Share Screen (Zoom Green) */}
           <button 
             onClick={() => setIsScreenSharing(!isScreenSharing)}
             style={styles.shareControlBtn}
@@ -688,7 +771,6 @@ function MeetingRoomContent() {
             </span>
           </button>
 
-          {/* Record */}
           <button 
             onClick={() => setIsRecording(!isRecording)}
             style={styles.controlBtn}
@@ -697,7 +779,6 @@ function MeetingRoomContent() {
             <span style={styles.controlLabel}>{isRecording ? 'Pause REC' : 'Record'}</span>
           </button>
 
-          {/* Emoji Reactions with Picker Popup */}
           <div style={{ position: 'relative' }}>
             <button 
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
@@ -736,13 +817,12 @@ function MeetingRoomContent() {
           </div>
         </div>
 
-        {/* Right: End / Leave Meeting Button (Zoom Red) */}
         <div style={styles.controlGroupRight}>
           <button 
             onClick={handleEndMeeting}
             style={styles.endMeetingBtn}
           >
-            End
+            Leave
           </button>
         </div>
       </footer>
@@ -763,6 +843,36 @@ export default function MeetingRoom() {
 }
 
 const styles = {
+  prejoinContainer: {
+    height: '100vh',
+    width: '100vw',
+    backgroundColor: '#F7F8FA',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '20px',
+  },
+  prejoinCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: '16px',
+    border: '1px solid #E5E5EA',
+    padding: '36px 32px',
+    width: '100%',
+    maxWidth: '420px',
+    textAlign: 'center',
+    boxShadow: '0 8px 30px rgba(0, 0, 0, 0.08)',
+  },
+  prejoinLogo: {
+    width: '54px',
+    height: '54px',
+    borderRadius: '16px',
+    backgroundColor: '#0B5CFF',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    margin: '0 auto 16px',
+    boxShadow: '0 4px 14px rgba(11, 92, 255, 0.3)',
+  },
   roomContainer: {
     display: 'flex',
     flexDirection: 'column',
@@ -945,7 +1055,7 @@ const styles = {
     width: '100%',
     height: '100%',
     objectFit: 'cover',
-    transform: 'scaleX(-1)', // Mirror local camera
+    transform: 'scaleX(-1)',
   },
   avatarTile: {
     width: '100%',
@@ -1379,7 +1489,6 @@ const styles = {
     cursor: 'pointer',
     padding: '4px',
     borderRadius: '6px',
-    transition: 'transform 0.1s ease',
   },
   raiseHandBtn: {
     width: '100%',

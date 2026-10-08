@@ -17,11 +17,15 @@ export default function JoinModal({ isOpen, onClose, defaultName = 'John Doe' })
   if (!isOpen) return null;
 
   const extractMeetingCode = (input) => {
-    const trimmed = input.trim();
-    // If it's a URL like http://localhost:3000/meeting/847-3921-5064
+    let trimmed = input.trim();
     if (trimmed.includes('/meeting/')) {
       const parts = trimmed.split('/meeting/');
-      return parts[1].split('?')[0].split('/')[0];
+      trimmed = parts[1].split('?')[0].split('/')[0].trim();
+    }
+    // If entered without dashes like 84739215064 or with spaces
+    const digitsOnly = trimmed.replace(/\D/g, '');
+    if (digitsOnly.length === 11) {
+      return `${digitsOnly.slice(0, 3)}-${digitsOnly.slice(3, 7)}-${digitsOnly.slice(7)}`;
     }
     return trimmed;
   };
