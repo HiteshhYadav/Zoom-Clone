@@ -6,21 +6,24 @@ import Sidebar from '@/components/Sidebar';
 import Navbar from '@/components/Navbar';
 import ScheduleModal from '@/components/ScheduleModal';
 import JoinModal from '@/components/JoinModal';
+import SettingsModal from '@/components/SettingsModal';
+import TrustModal from '@/components/TrustModal';
 import MeetingCard from '@/components/MeetingCard';
+import TeamChatView from '@/components/TeamChatView';
+import ContactsView from '@/components/ContactsView';
+import ClipsView from '@/components/ClipsView';
 import { 
   Video, 
   Plus, 
   Calendar, 
   Share2, 
   Clock, 
-  ChevronRight, 
   Copy, 
   Check, 
   CalendarCheck2, 
   History,
-  Sparkles,
-  Link2,
-  Tv
+  ShieldCheck,
+  Radio
 } from 'lucide-react';
 import { 
   createInstantMeeting, 
@@ -31,6 +34,9 @@ import {
 
 export default function Dashboard() {
   const router = useRouter();
+
+  // Sidebar navigation view state ('home' | 'meetings' | 'chat' | 'clips' | 'contacts')
+  const [sidebarTab, setSidebarTab] = useState('home');
 
   // State
   const [user, setUser] = useState(null);
@@ -43,6 +49,8 @@ export default function Dashboard() {
   // Modals
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [isJoinOpen, setIsJoinOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTrustOpen, setIsTrustOpen] = useState(false);
   const [copiedPMI, setCopiedPMI] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
@@ -66,8 +74,8 @@ export default function Dashboard() {
           getRecentMeetings().catch(() => []),
         ]);
         setUser(userData);
-        setUpcomingMeetings(upcomingData);
-        setRecentMeetings(recentData);
+        setUpcomingMeetings(upcomingData || []);
+        setRecentMeetings(recentData || []);
       } catch (err) {
         console.error('Failed to load dashboard data:', err);
       } finally {
@@ -83,10 +91,10 @@ export default function Dashboard() {
   };
 
   // Instant meeting handler
-  const handleNewMeeting = async () => {
+  const handleNewMeeting = async (title = 'Instant Zoom Meeting') => {
     try {
       setCreatingInstant(true);
-      const meeting = await createInstantMeeting('Instant Zoom Meeting');
+      const meeting = await createInstantMeeting(title);
       showToast('Meeting created! Launching room...');
       router.push(`/meeting/${meeting.meeting_code}`);
     } catch (err) {
@@ -100,7 +108,6 @@ export default function Dashboard() {
     try {
       setCreatingInstant(true);
       const meeting = await createInstantMeeting('Screen Share Session');
-      // Save flag to auto-trigger screen share mode
       if (typeof window !== 'undefined') {
         localStorage.setItem(`zoom_screenshare_${meeting.meeting_code}`, 'true');
       }
@@ -123,7 +130,7 @@ export default function Dashboard() {
 
   const copyPMILink = () => {
     const pmiCode = '847-3921-5064';
-    const link = `http://localhost:3000/meeting/${pmiCode}`;
+    const link = typeof window !== 'undefined' ? `${window.location.origin}/meeting/${pmiCode}` : `/meeting/${pmiCode}`;
     navigator.clipboard.writeText(`Personal Meeting Room:\n${link}`);
     setCopiedPMI(true);
     showToast('Personal Meeting link copied!');
@@ -141,7 +148,12 @@ export default function Dashboard() {
   return (
     <div className="app-layout">
       {/* Zoom Left Sidebar */}
-      <Sidebar />
+      <Sidebar 
+        activeTab={sidebarTab}
+        onTabChange={(tab) => setSidebarTab(tab)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenTrust={() => setIsTrustOpen(true)}
+      />
 
       {/* Main Content Area */}
       <div className="main-content">
@@ -154,195 +166,206 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div style={styles.dashboardContainer}>
-          {/* Top Banner & Quick Actions Section */}
-          <div style={styles.topSection}>
-            {/* Left 4 Iconic Zoom Action Buttons */}
-            <div style={styles.actionsGrid}>
-              {/* 1. New Meeting (Orange) */}
-              <button 
-                onClick={handleNewMeeting} 
-                disabled={creatingInstant}
-                style={styles.actionCard}
-                className="action-card-hover"
-              >
-                <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--orange, #F26D21)' }}>
-                  <Video size={30} color="#FFFFFF" strokeWidth={2.2} />
-                </div>
-                <span style={styles.actionTitle}>New Meeting</span>
-                <span style={styles.actionSubtitle}>
-                  {creatingInstant ? 'Starting...' : 'Instant video room'}
-                </span>
-              </button>
+        {/* ── CONDITIONAL SIDEBAR VIEW ROUTING ────────────────────── */}
+        {sidebarTab === 'chat' ? (
+          <TeamChatView onStartMeeting={handleNewMeeting} />
+        ) : sidebarTab === 'contacts' ? (
+          <ContactsView 
+            onStartMeeting={handleNewMeeting} 
+            onOpenChat={() => setSidebarTab('chat')} 
+          />
+        ) : sidebarTab === 'clips' ? (
+          <ClipsView onStartMeeting={handleNewMeeting} />
+        ) : (
+          /* ── HOME & MEETINGS DASHBOARD VIEW ─────────────────────── */
+          <div style={styles.dashboardContainer}>
+            {/* Top Banner & Quick Actions Section (Shown on Home) */}
+            {sidebarTab === 'home' && (
+              <div style={styles.topSection}>
+                {/* Left 4 Iconic Zoom Action Buttons */}
+                <div style={styles.actionsGrid}>
+                  {/* 1. New Meeting (Orange) */}
+                  <button 
+                    onClick={() => handleNewMeeting('Instant Zoom Meeting')} 
+                    disabled={creatingInstant}
+                    style={styles.actionCard}
+                  >
+                    <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--orange, #F26D21)' }}>
+                      <Video size={30} color="#FFFFFF" strokeWidth={2.2} />
+                    </div>
+                    <span style={styles.actionTitle}>New Meeting</span>
+                    <span style={styles.actionSubtitle}>
+                      {creatingInstant ? 'Starting...' : 'Instant video room'}
+                    </span>
+                  </button>
 
-              {/* 2. Join (Blue) */}
-              <button 
-                onClick={() => setIsJoinOpen(true)}
-                style={styles.actionCard}
-                className="action-card-hover"
-              >
-                <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--zoom-blue, #0B5CFF)' }}>
-                  <Plus size={30} color="#FFFFFF" strokeWidth={2.5} />
-                </div>
-                <span style={styles.actionTitle}>Join</span>
-                <span style={styles.actionSubtitle}>via ID or link</span>
-              </button>
+                  {/* 2. Join (Blue) */}
+                  <button 
+                    onClick={() => setIsJoinOpen(true)}
+                    style={styles.actionCard}
+                  >
+                    <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--zoom-blue, #0B5CFF)' }}>
+                      <Plus size={30} color="#FFFFFF" strokeWidth={2.5} />
+                    </div>
+                    <span style={styles.actionTitle}>Join</span>
+                    <span style={styles.actionSubtitle}>via ID or link</span>
+                  </button>
 
-              {/* 3. Schedule (Blue) */}
-              <button 
-                onClick={() => setIsScheduleOpen(true)}
-                style={styles.actionCard}
-                className="action-card-hover"
-              >
-                <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--zoom-blue, #0B5CFF)' }}>
-                  <Calendar size={28} color="#FFFFFF" strokeWidth={2.2} />
-                </div>
-                <span style={styles.actionTitle}>Schedule</span>
-                <span style={styles.actionSubtitle}>Plan upcoming call</span>
-              </button>
+                  {/* 3. Schedule (Blue) */}
+                  <button 
+                    onClick={() => setIsScheduleOpen(true)}
+                    style={styles.actionCard}
+                  >
+                    <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--zoom-blue, #0B5CFF)' }}>
+                      <Calendar size={28} color="#FFFFFF" strokeWidth={2.2} />
+                    </div>
+                    <span style={styles.actionTitle}>Schedule</span>
+                    <span style={styles.actionSubtitle}>Plan upcoming call</span>
+                  </button>
 
-              {/* 4. Share Screen (Blue) */}
-              <button 
-                onClick={handleShareScreen}
-                disabled={creatingInstant}
-                style={styles.actionCard}
-                className="action-card-hover"
-              >
-                <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--zoom-blue, #0B5CFF)' }}>
-                  <Share2 size={26} color="#FFFFFF" strokeWidth={2.2} />
+                  {/* 4. Share Screen (Blue) */}
+                  <button 
+                    onClick={handleShareScreen}
+                    disabled={creatingInstant}
+                    style={styles.actionCard}
+                  >
+                    <div style={{ ...styles.actionIconBadge, backgroundColor: 'var(--zoom-blue, #0B5CFF)' }}>
+                      <Share2 size={26} color="#FFFFFF" strokeWidth={2.2} />
+                    </div>
+                    <span style={styles.actionTitle}>Share Screen</span>
+                    <span style={styles.actionSubtitle}>Instant presentation</span>
+                  </button>
                 </div>
-                <span style={styles.actionTitle}>Share Screen</span>
-                <span style={styles.actionSubtitle}>Instant presentation</span>
-              </button>
-            </div>
 
-            {/* Right Widget: Live Clock & Personal Meeting ID */}
-            <div style={styles.clockCard}>
-              <div style={styles.clockHeader}>
-                <div style={styles.clockTime}>{formattedTime}</div>
-                <div style={styles.clockDate}>{formattedDate}</div>
+                {/* Right Widget: Live Clock & Personal Meeting ID */}
+                <div style={styles.clockCard}>
+                  <div style={styles.clockHeader}>
+                    <div style={styles.clockTime}>{formattedTime}</div>
+                    <div style={styles.clockDate}>{formattedDate}</div>
+                  </div>
+
+                  <div style={styles.pmiBox}>
+                    <div style={styles.pmiInfo}>
+                      <span style={styles.pmiLabel}>Personal Meeting ID (PMI)</span>
+                      <span style={styles.pmiValue}>847-3921-5064</span>
+                    </div>
+                    <div style={styles.pmiActions}>
+                      <button 
+                        onClick={copyPMILink}
+                        style={styles.pmiBtn}
+                        title="Copy Personal Meeting Link"
+                      >
+                        {copiedPMI ? <Check size={14} color="#2D8C3E" /> : <Copy size={14} />}
+                        <span>{copiedPMI ? 'Copied' : 'Copy'}</span>
+                      </button>
+                      <button 
+                        onClick={() => router.push('/meeting/847-3921-5064')}
+                        style={styles.pmiStartBtn}
+                      >
+                        Start PMI
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Meetings Section (Tabbed Upcoming / Recent) */}
+            <div style={styles.meetingsSection}>
+              <div style={styles.sectionHeader}>
+                <div style={styles.tabsList}>
+                  <button
+                    onClick={() => setActiveTab('upcoming')}
+                    style={{
+                      ...styles.tabButton,
+                      ...(activeTab === 'upcoming' ? styles.tabButtonActive : {})
+                    }}
+                  >
+                    <CalendarCheck2 size={16} />
+                    <span>Upcoming Meetings</span>
+                    <span style={styles.tabBadge}>{upcomingMeetings.length}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab('recent')}
+                    style={{
+                      ...styles.tabButton,
+                      ...(activeTab === 'recent' ? styles.tabButtonActive : {})
+                    }}
+                  >
+                    <History size={16} />
+                    <span>Recent & Ended</span>
+                    <span style={styles.tabBadge}>{recentMeetings.length}</span>
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setIsScheduleOpen(true)}
+                  style={styles.scheduleNewBtn}
+                >
+                  <Plus size={15} />
+                  <span>Schedule Meeting</span>
+                </button>
               </div>
 
-              <div style={styles.pmiBox}>
-                <div style={styles.pmiInfo}>
-                  <span style={styles.pmiLabel}>Personal Meeting ID (PMI)</span>
-                  <span style={styles.pmiValue}>847-3921-5064</span>
-                </div>
-                <div style={styles.pmiActions}>
-                  <button 
-                    onClick={copyPMILink}
-                    style={styles.pmiBtn}
-                    title="Copy Personal Meeting Link"
-                  >
-                    {copiedPMI ? <Check size={14} color="#2D8C3E" /> : <Copy size={14} />}
-                    <span>{copiedPMI ? 'Copied' : 'Copy'}</span>
-                  </button>
-                  <button 
-                    onClick={() => router.push('/meeting/847-3921-5064')}
-                    style={styles.pmiStartBtn}
-                  >
-                    Start PMI
-                  </button>
-                </div>
+              {/* Meetings Content List */}
+              <div style={styles.listContainer}>
+                {loading ? (
+                  <div style={styles.emptyState}>
+                    <Clock size={32} color="var(--zoom-blue)" style={{ animation: 'spin 2s linear infinite' }} />
+                    <p style={{ marginTop: '12px', color: 'var(--text-secondary)' }}>Loading meetings...</p>
+                  </div>
+                ) : activeTab === 'upcoming' ? (
+                  upcomingMeetings.length > 0 ? (
+                    upcomingMeetings.map((m) => (
+                      <MeetingCard
+                        key={m.id || m.meeting_code}
+                        meeting={m}
+                        type="upcoming"
+                        onDeleted={handleMeetingDeleted}
+                        onStart={(code) => router.push(`/meeting/${code}`)}
+                      />
+                    ))
+                  ) : (
+                    <div style={styles.emptyState}>
+                      <div style={styles.emptyIconCircle}>
+                        <Calendar size={32} color="var(--zoom-blue)" />
+                      </div>
+                      <h4 style={styles.emptyTitle}>No Upcoming Meetings</h4>
+                      <p style={styles.emptySub}>Schedule your next collaborative session or launch an instant meeting.</p>
+                      <button
+                        onClick={() => setIsScheduleOpen(true)}
+                        className="btn btn-primary"
+                        style={{ marginTop: '16px' }}
+                      >
+                        Schedule a Meeting
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  recentMeetings.length > 0 ? (
+                    recentMeetings.map((m) => (
+                      <MeetingCard
+                        key={m.id || m.meeting_code}
+                        meeting={m}
+                        type="recent"
+                        onStart={(code) => router.push(`/meeting/${code}`)}
+                      />
+                    ))
+                  ) : (
+                    <div style={styles.emptyState}>
+                      <div style={styles.emptyIconCircle}>
+                        <History size={32} color="var(--text-secondary)" />
+                      </div>
+                      <h4 style={styles.emptyTitle}>No Recent Meetings</h4>
+                      <p style={styles.emptySub}>Your meeting history will appear here after you conclude sessions.</p>
+                    </div>
+                  )
+                )}
               </div>
             </div>
           </div>
-
-          {/* Bottom Meetings Section */}
-          <div style={styles.meetingsSection}>
-            <div style={styles.sectionHeader}>
-              <div style={styles.tabsList}>
-                <button
-                  onClick={() => setActiveTab('upcoming')}
-                  style={{
-                    ...styles.tabButton,
-                    ...(activeTab === 'upcoming' ? styles.tabButtonActive : {})
-                  }}
-                >
-                  <CalendarCheck2 size={16} />
-                  <span>Upcoming Meetings</span>
-                  <span style={styles.tabBadge}>{upcomingMeetings.length}</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('recent')}
-                  style={{
-                    ...styles.tabButton,
-                    ...(activeTab === 'recent' ? styles.tabButtonActive : {})
-                  }}
-                >
-                  <History size={16} />
-                  <span>Recent & Ended</span>
-                  <span style={styles.tabBadge}>{recentMeetings.length}</span>
-                </button>
-              </div>
-
-              <button
-                onClick={() => setIsScheduleOpen(true)}
-                style={styles.scheduleNewBtn}
-              >
-                <Plus size={15} />
-                <span>Schedule Meeting</span>
-              </button>
-            </div>
-
-            {/* Meetings Content List */}
-            <div style={styles.listContainer}>
-              {loading ? (
-                <div style={styles.emptyState}>
-                  <Clock size={32} color="var(--zoom-blue)" style={{ animation: 'spin 2s linear infinite' }} />
-                  <p style={{ marginTop: '12px', color: 'var(--text-secondary)' }}>Loading meetings...</p>
-                </div>
-              ) : activeTab === 'upcoming' ? (
-                upcomingMeetings.length > 0 ? (
-                  upcomingMeetings.map((m) => (
-                    <MeetingCard
-                      key={m.id || m.meeting_code}
-                      meeting={m}
-                      type="upcoming"
-                      onDeleted={handleMeetingDeleted}
-                      onStart={(code) => router.push(`/meeting/${code}`)}
-                    />
-                  ))
-                ) : (
-                  <div style={styles.emptyState}>
-                    <div style={styles.emptyIconCircle}>
-                      <Calendar size={32} color="var(--zoom-blue)" />
-                    </div>
-                    <h4 style={styles.emptyTitle}>No Upcoming Meetings</h4>
-                    <p style={styles.emptySub}>Schedule your next collaborative session or launch an instant meeting.</p>
-                    <button
-                      onClick={() => setIsScheduleOpen(true)}
-                      className="btn btn-primary"
-                      style={{ marginTop: '16px' }}
-                    >
-                      Schedule a Meeting
-                    </button>
-                  </div>
-                )
-              ) : (
-                recentMeetings.length > 0 ? (
-                  recentMeetings.map((m) => (
-                    <MeetingCard
-                      key={m.id || m.meeting_code}
-                      meeting={m}
-                      type="recent"
-                      onStart={(code) => router.push(`/meeting/${code}`)}
-                    />
-                  ))
-                ) : (
-                  <div style={styles.emptyState}>
-                    <div style={styles.emptyIconCircle}>
-                      <History size={32} color="var(--text-secondary)" />
-                    </div>
-                    <h4 style={styles.emptyTitle}>No Recent Meetings</h4>
-                    <p style={styles.emptySub}>Your meeting history will appear here after you conclude sessions.</p>
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Modals */}
@@ -356,6 +379,16 @@ export default function Dashboard() {
         isOpen={isJoinOpen}
         onClose={() => setIsJoinOpen(false)}
         defaultName={user?.name || 'John Doe'}
+      />
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
+
+      <TrustModal
+        isOpen={isTrustOpen}
+        onClose={() => setIsTrustOpen(false)}
       />
     </div>
   );
@@ -413,7 +446,6 @@ const styles = {
     color: 'var(--text-secondary, #747487)',
   },
   clockCard: {
-    backgroundColor: 'linear-gradient(135deg, #1B1A2E 0%, #2A2946 100%)',
     background: '#1B1A2E',
     color: '#FFFFFF',
     borderRadius: '16px',
@@ -481,7 +513,6 @@ const styles = {
     fontWeight: '500',
     border: 'none',
     cursor: 'pointer',
-    transition: 'background 0.15s ease',
   },
   pmiStartBtn: {
     padding: '5px 12px',

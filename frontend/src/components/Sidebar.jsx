@@ -1,34 +1,29 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { 
   Home, 
-  Video, 
   Calendar, 
   MessageSquare, 
-  Clock, 
+  Video, 
   Users, 
   Settings, 
   ShieldCheck 
 } from 'lucide-react';
 
-export default function Sidebar() {
-  const pathname = usePathname();
-
+export default function Sidebar({ activeTab = 'home', onTabChange, onOpenSettings, onOpenTrust }) {
   const navItems = [
-    { icon: Home, label: 'Home', href: '/', active: pathname === '/' },
-    { icon: Calendar, label: 'Meetings', href: '/#meetings', active: pathname.includes('/#meetings') },
-    { icon: MessageSquare, label: 'Team Chat', href: '/#chat', active: false },
-    { icon: Video, label: 'Clips', href: '/#clips', active: false },
-    { icon: Users, label: 'Contacts', href: '/#contacts', active: false },
+    { id: 'home', icon: Home, label: 'Home' },
+    { id: 'meetings', icon: Calendar, label: 'Meetings' },
+    { id: 'chat', icon: MessageSquare, label: 'Team Chat' },
+    { id: 'clips', icon: Video, label: 'Clips' },
+    { id: 'contacts', icon: Users, label: 'Contacts' },
   ];
 
   return (
     <aside style={styles.sidebar}>
       {/* Zoom Logo Brand */}
-      <div style={styles.logoContainer}>
+      <div style={styles.logoContainer} onClick={() => onTabChange && onTabChange('home')} role="button" tabIndex={0}>
         <div style={styles.logoBadge}>
           <Video size={24} color="#FFFFFF" strokeWidth={2.5} />
         </div>
@@ -36,44 +31,57 @@ export default function Sidebar() {
 
       {/* Main Navigation */}
       <nav style={styles.nav}>
-        {navItems.map((item, idx) => {
+        {navItems.map((item) => {
           const Icon = item.icon;
+          const isActive = activeTab === item.id;
           return (
-            <Link 
-              key={idx} 
-              href={item.href}
+            <button
+              key={item.id}
+              onClick={() => onTabChange && onTabChange(item.id)}
               style={{
                 ...styles.navItem,
-                ...(item.active ? styles.navItemActive : {})
+                ...(isActive ? styles.navItemActive : {})
               }}
               title={item.label}
             >
               <div style={styles.iconWrapper}>
-                <Icon size={20} strokeWidth={item.active ? 2.2 : 1.8} />
+                <Icon size={20} strokeWidth={isActive ? 2.2 : 1.8} />
               </div>
               <span style={{
                 ...styles.navLabel,
-                color: item.active ? '#FFFFFF' : 'var(--sidebar-text)'
+                color: isActive ? '#FFFFFF' : 'var(--sidebar-text)'
               }}>
                 {item.label}
               </span>
-              {item.active && <div style={styles.activeIndicator} />}
-            </Link>
+              {isActive && <div style={styles.activeIndicator} />}
+            </button>
           );
         })}
       </nav>
 
       {/* Bottom Profile / Settings */}
       <div style={styles.bottomSection}>
-        <button style={styles.bottomBtn} title="Security & Compliance">
+        <button 
+          onClick={onOpenTrust}
+          style={styles.bottomBtn} 
+          title="Security & Compliance"
+        >
           <ShieldCheck size={20} />
           <span style={styles.navLabel}>Trust</span>
         </button>
-        <button style={styles.bottomBtn} title="Settings">
+        <button 
+          onClick={onOpenSettings}
+          style={styles.bottomBtn} 
+          title="Settings"
+        >
           <Settings size={20} />
           <span style={styles.navLabel}>Settings</span>
         </button>
-        <div style={styles.userAvatarContainer} title="John Doe (Host)">
+        <div 
+          style={styles.userAvatarContainer} 
+          onClick={onOpenSettings}
+          title="John Doe (Host) — Click for Profile"
+        >
           <div style={styles.userAvatar}>
             JD
           </div>
@@ -101,6 +109,7 @@ const styles = {
   },
   logoContainer: {
     marginBottom: '24px',
+    cursor: 'pointer',
   },
   logoBadge: {
     width: '42px',
@@ -115,7 +124,7 @@ const styles = {
   nav: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
+    gap: '8px',
     width: '100%',
     alignItems: 'center',
     flex: 1,
@@ -130,8 +139,10 @@ const styles = {
     height: '56px',
     borderRadius: '10px',
     color: 'var(--sidebar-text, #9B9BB4)',
+    backgroundColor: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
     transition: 'all 0.15s ease',
-    textDecoration: 'none',
   },
   navItemActive: {
     backgroundColor: 'var(--sidebar-active, rgba(255, 255, 255, 0.12))',
@@ -160,7 +171,7 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: '12px',
+    gap: '8px',
     width: '100%',
     paddingTop: '12px',
     borderTop: '1px solid rgba(255, 255, 255, 0.08)',
