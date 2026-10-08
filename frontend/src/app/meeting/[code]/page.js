@@ -143,40 +143,100 @@ function MeetingRoomContent() {
     if (savedVideo !== null) setIsVideoOn(savedVideo === 'true');
     if (savedAudio !== null) setIsMuted(savedAudio === 'false');
 
-    const initialColor = userName.includes('Host') ? '#0B5CFF' : '#27AE60';
+    const isCurrentHost = userName.includes('Host') || userName === 'John Doe';
+    const initialColor = isCurrentHost ? '#0B5CFF' : '#27AE60';
+    const selfId = 'user_' + Math.random().toString(36).substring(2, 9);
 
-    const defaultParticipants = [
-      { id: 'self', name: userName, isHost: userName.includes('Host'), isMuted: savedAudio === 'false', isVideoOn: savedVideo !== 'false', avatarColor: initialColor },
-      { id: 'sarah', name: 'Sarah Chen (PM)', isHost: false, isMuted: false, isVideoOn: true, avatarColor: '#8E44AD' },
-      { id: 'alex', name: 'Alex Rivera (Eng)', isHost: false, isMuted: true, isVideoOn: true, avatarColor: '#16A085' },
-    ];
-    setParticipants(defaultParticipants);
+    const selfParticipant = {
+      id: selfId,
+      name: userName,
+      isHost: isCurrentHost,
+      isMuted: savedAudio === 'false',
+      isVideoOn: savedVideo !== 'false',
+      avatarColor: initialColor
+    };
 
-    setMessages([
-      { id: 1, sender: 'Zoom Bot', text: 'Welcome to your meeting! End-to-end encryption is enabled.', time: 'Just now', isSystem: true },
-    ]);
+    // Retrieve existing room participants from shared state
+    const roomStorageKey = `zoom_active_participants_${meetingCode}`;
+    let currentRoomParticipants = [];
+    try {
+      currentRoomParticipants = JSON.parse(localStorage.getItem(roomStorageKey) || '[]');
+    } catch (e) {
+      currentRoomParticipants = [];
+    }
 
-    // ── Setup Cross-Tab Broadcast Channel ─────────────────────
-    if (typeof window !== 'undefined' && window.BroadcastChannel) {
-      try {
-        const bc = new BroadcastChannel(`zoom_room_${meetingCode}`);
-        broadcastRef.current = bc;
+    // Filter out stale entry of same name if rejoining
+    currentRoomParticipants = currentRoomParticipants.filter(p => p.name !== userName);
 
-        bc.onmessage = (event) => {
-          handleIncomingEvent(event.data);
-        };
+    // If room has no host yet and this is not a host, ensure host is listed
+    if (!isCurrentHost && !currentRoomParticipants.some(p => p.isHost)) {
+      currentRoomParticipants.unshift({
+        id: 'host_root',
+        name: meeting?.host_name || 'John Doe (Host)',
+        isHost: true,
+        isMuted: false,
+        isVideoOn: true,
+        avatarColor: '#0B5CFF'
+      });
+    }
 
-        // Announce presence to other open tabs
-        bc.postMessage({
-          type: 'participant_joined',
-          name: userName,
-          avatarColor: initialColor,
-          isVideoOn: savedVideo !== 'false',
-          isMuted: savedAudio === 'false'
-        });
-      } catch (bcErr) {
-        console.warn('BroadcastChannel error:', bcErr);
+    const updatedParticipants = [...currentRoomParticipants, selfParticipant];
+    localStorage.setItem(roomStorageKey, JSON.stringify(updatedParticipants));
+    setParticipants(updatedParticipants);
+
+    // Initial chat messages
+    const chatStorageKey = `zoom_active_chat_${meetingCode}`;
+    let savedChat = [];
+    try {
+      savedChat = JSON.parse(localStorage.getItem(chatStorageKey) || '[]');
+    } catch (e) {
+      savedChat = [];
+    }
+    if (savedChat.length === 0) {
+      savedChat = [
+        { id: 1, sender: 'Zoom Bot', text: `Welcome to "${meeting?.title || 'Zoom Meeting'}"! Meeting ID: ${meetingCode}`, time: 'Just now', isSystem: true }
+      ];
+      localStorage.setItem(chatStorageKey, JSON.stringify(savedChat));
+    }
+    setMessages(savedChat);
+
+    // ── Setup Cross-Tab Broadcast Channel & Storage Listener ──
+    if (typeof window !== 'undefined') {
+      // 1. BroadcastChannel
+      if (window.BroadcastChannel) {
+        try {
+          const bc = new BroadcastChannel(`zoom_room_${meetingCode}`);
+          broadcastRef.current = bc;
+
+          bc.onmessage = (event) => {
+            handleIncomingEvent(event.data);
+          };
+
+          // Broadcast join event
+          bc.postMessage({
+            type: 'participant_joined',
+            participant: selfParticipant,
+            allParticipants: updatedParticipants
+          });
+        } catch (bcErr) {
+          console.warn('BroadcastChannel notice:', bcErr);
+        }
       }
+
+      // 2. Storage event listener for multi-tab sync
+      const handleStorageChange = (e) => {
+        if (e.key === roomStorageKey && e.newValue) {
+          try {
+            setParticipants(JSON.parse(e.newValue));
+          } catch (err) {}
+        }
+        if (e.key === chatStorageKey && e.newValue) {
+          try {
+            setMessages(JSON.parse(e.newValue));
+          } catch (err) {}
+        }
+      };
+      window.addEventListener('storage', handleStorageChange);
     }
 
     // ── Setup WebSocket ───────────────────────────────────────
@@ -318,13 +378,20 @@ function MeetingRoomContent() {
     if (!chatInput.trim()) return;
 
     const newMsg = {
-      id: Date.now(),
+      id: Date.now() + Math.random(),
       sender: displayName,
       text: chatInput.trim(),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setMessages(prev => [...prev, newMsg]);
+    setMessages(prev => {
+      const updated = [...prev, newMsg];
+      try {
+        localStorage.setItem(`zoom_active_chat_${meetingCode}`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+
     dispatchMeetingEvent({
       type: 'chat_message',
       name: displayName,
