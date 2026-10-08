@@ -295,7 +295,8 @@ function MeetingRoomContent() {
 
   // Copy Meeting Link
   const handleCopyInvite = () => {
-    const link = `http://localhost:3000/meeting/${meetingCode}`;
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    const link = `${origin}/meeting/${meetingCode}`;
     const text = `Join Zoom Meeting:\n${meeting?.title || 'Zoom Meeting'}\nMeeting ID: ${meetingCode}\nLink: ${link}`;
     navigator.clipboard.writeText(text);
     setCopiedLink(true);
@@ -305,10 +306,13 @@ function MeetingRoomContent() {
   // End or Leave Meeting
   const handleEndMeeting = async () => {
     if (confirm('Are you sure you want to end this meeting for all participants?')) {
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop());
+      }
       try {
         await endMeeting(meetingCode);
       } catch (err) {
-        console.log('Meeting ended locally');
+        // Handled locally
       }
       router.push('/');
     }
